@@ -32,6 +32,18 @@ ANDROIDLDFLAGS := -Wl,-O3 -Wl,--gc-sections \
                   -Wl,--exclude-libs,$(BUILD_ANDROID_NDK)/toolchains/llvm/prebuilt/linux-x86_64/aarch64-linux-android/lib64/libatomic.a \
                   -static-libstdc++ -Wl,--build-id -Wl,--warn-shared-textrel -Wl,--fatal-warnings -Qunused-arguments -Wl,-z,noexecstack  -Wl,-z,defs
 
+# FreeBSD: clang, as for Android; the warnings ANDROIDCXXFLAGS turns off, and
+# newer clang's on variable-length arrays.  The kernel UAPI header's
+# linux/*.h from ../freebsd/include.
+ifeq ($(shell uname -s), FreeBSD)
+    CXXFLAGS += -I../freebsd/include \
+                -Wno-missing-braces -Wno-inconsistent-missing-override \
+                -Wno-unused-variable -Wno-overloaded-virtual \
+                -Wno-tautological-pointer-compare -Wno-vla-cxx-extension \
+                -Wno-unused-private-field \
+                -Wno-unused-command-line-argument
+endif
+
 ifeq ($(BUILD_DEBUG_FLAG), debug)
     ifeq ($(BUILD_UMD_API_TYPE), python_api)
     CXXFLAGS += -O2 -g -DRTDEBUG=1

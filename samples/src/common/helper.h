@@ -15,7 +15,12 @@
 
 #include "standard_api.h"
 
+#ifdef __FreeBSD__
+#include <pthread_np.h>
+#define gettid() ((long)pthread_getthreadid_np())
+#else
 #define gettid() syscall(SYS_gettid)
+#endif
 
 #ifdef __ANDROID__
 class SemOp {

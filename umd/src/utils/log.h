@@ -19,7 +19,12 @@
 #include "debug.h"
 #include "utils/helper.h"
 
+#ifdef __FreeBSD__
+#include <pthread_np.h>
+#define gettid() ((long)pthread_getthreadid_np())
+#else
 #define gettid() syscall(SYS_gettid)
+#endif
 #define __FILENAME__                                                           \
   (strrchr(__FILE__, '/') ? (strrchr(__FILE__, '/') + 1) : __FILE__)
 
