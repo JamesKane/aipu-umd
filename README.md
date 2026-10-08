@@ -18,6 +18,9 @@ for FreeBSD, for the CIX Sky1's NPU (Zhouyi X2, architecture v3; Orange Pi
 - `tools/noerun/`: the same through CIX's binary-only `libnoe`, a Linux
   program, and `noerun.py` through its Python wheel, from JPEGs
   (BSD-2-Clause).
+- `tools/ort/`: ONNX models on the NPU through CIX's ONNX Runtime
+  execution provider: `prepare.py` readies and quantizes a model,
+  `ortrun.py` classifies JPEGs (BSD-2-Clause).
 
 ## Why 4.1.0
 
@@ -89,3 +92,48 @@ numpy and Pillow from pip:
   imports it as the module.
 - `noe_load_tensor()` takes the input as `bytes`: given an ndarray, the
   wheel returns outputs as ndarrays that repeat their first element.
+
+## CIX's ONNX Runtime provider
+
+`cix-npu-onnxruntime` 1.2.0 (in
+[radxa-pkg/cix-prebuilt](https://github.com/radxa-pkg/cix-prebuilt)'s
+release `26Q2-2607`, with `cix-noe-umd` 3.1.2) is ONNX Runtime 1.22 with a
+`ZhouyiExecutionProvider`, whose compiler (Arm China's Compass, binary) turns
+the model into an NPU graph on the board when a session starts. Everything
+it needs comes in its wheels and libraries, including its own `libaipudrv`
+build (`libaipu_driver.so`), which matches aipu-kmod's ioctls. Under the
+Linuxulator it needs:
+
+- a Linux CPython **3.11** (the wheel is `cp311`), python-build-standalone's;
+- libstdc++ with `GLIBCXX_3.4.30`, newer than Rocky 9's: conda-forge's
+  `libstdcxx` and `libgcc` 14 (built for glibc 2.17), in a directory of
+  their own on `LD_LIBRARY_PATH` (Debian 12's need glibc 2.36);
+- `OPERATOR_PATH` naming the package's `operator/` directory (the operator
+  libraries the compiler links), else it looks in `./operator`.
+
+```
+python/bin/python3.11 -m pip install numpy pillow onnx \
+    onnxruntime_zhouyi-1.22.0-cp311-cp311-linux_aarch64.whl \
+    ZhouyiOperators_x2-25.9.19-py3-none-any.whl
+export LD_LIBRARY_PATH=<libstdc++ dir> OPERATOR_PATH=<package>/operator
+python/bin/python3.11 tools/ort/prepare.py mobilenetv2-7.onnx int8.onnx *.JPEG
+python/bin/python3.11 tools/ort/ortrun.py int8.onnx labels.txt *.JPEG
+```
+
+The compiler takes **int8** models (QDQ): float depthwise convolutions, and
+float convolutions on larger tensors, fail to compile. `prepare.py`
+quantizes with ONNX Runtime's own tools, calibrated on JPEGs, after three
+fixes the compiler needs:
+
+- BatchNormalization folded into the convolutions (ONNX Runtime's
+  quantization pre-processing): a lone quantized BatchNormalization comes
+  out wrong, silently. For the folding, weights must not be graph inputs, as
+  older exporters (opset 7) make them.
+- Reshape shapes with 0 ("copy this dimension") made explicit: the compiler
+  takes the 0 for a size.
+- Opset 13, for per-channel quantization.
+
+CIX's ONNX-model-zoo MobileNetV2 (`mobilenetv2-7.onnx`, the model its `.cix`
+is built from) then labels CIX's five test images right on the NPU, ~13.8 ms
+each, the session compiling in ~1.2 s; float inputs and outputs are
+converted on the CPU, and the calibration is ONNX Runtime's, not CIX's.
