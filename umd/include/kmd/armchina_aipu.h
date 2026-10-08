@@ -1,0 +1,1 @@
+../../../kmd/armchina-npu/include/armchina_aipu.h

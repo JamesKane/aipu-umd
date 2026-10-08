@@ -1,0 +1,142 @@
+// Copyright (C) 2023-2025 Arm Technology (China) Co. Ltd.
+//
+// SPDX-License-Identifier: Apache-2.0
+
+/**
+ * @file  dynamic_shape.cpp
+ * @brief AIPU User Mode Driver (UMD) dynamic shape implementation
+ */
+
+#include "dynamic_shape.h"
+
+#include <cstring>
+#include <numeric>
+
+#include "graph.h"
+#include "utils/helper.h"
+#include "utils/log.h"
+
+namespace aipudrv {
+DynamicShape::DynamicShape(JobBase &_jobbase, GraphV3X &_graph,
+                           aipu_dynshape_param_t *dyn_params)
+    : m_jobbase(_jobbase), m_graph(_graph) {
+  if (dyn_params != nullptr)
+    set_dynamic_shape_data(dyn_params);
+}
+
+DynamicShape::DynamicShape(JobBase &_jobbase, GraphV3X &_graph,
+                           const aipu_dynshape_param_t &dyn_params)
+    : m_jobbase(_jobbase), m_graph(_graph) {
+  if (dyn_params.input_shape_cnt != 0)
+    set_dynamic_shape_data(&dyn_params);
+}
+
+DynamicShape::~DynamicShape() {}
+
+aipu_status_t
+DynamicShape::update_dynamic_io_tensor_size(aipu_tensor_type_t type) {
+  aipu_status_t ret = AIPU_STATUS_SUCCESS;
+  GraphV3X &graph_v3x = static_cast<GraphV3X &>(m_graph);
+
+  if (type == AIPU_TENSOR_TYPE_INPUT) {
+    for (uint32_t i = 0; i < graph_v3x.get_bss(0).io.inputs.size(); i++) {
+      graph_v3x.get_bss(0).io.inputs[i].size = m_config_in_tensor_size[i];
+    }
+  } else if (type == AIPU_TENSOR_TYPE_OUTPUT) {
+    for (uint32_t i = 0; i < graph_v3x.get_bss(0).io.outputs.size(); i++) {
+      graph_v3x.get_bss(0).io.outputs[i].size = m_config_out_tensor_size[i];
+    }
+  } else {
+    LOG(LOG_ERR, "Invalid io tensor type:%d", type);
+    return AIPU_STATUS_ERROR_INVALID_OP;
+  }
+
+  return ret;
+}
+
+aipu_status_t
+DynamicShape::set_dynamic_shape_data(const aipu_dynshape_param_t *shape_param) {
+  auto clear_dynamic_tensor_info = [this]() {
+    m_config_in_tensor_shape.clear();
+    m_config_in_tensor_size.clear();
+  };
+
+  clear_dynamic_tensor_info();
+  const auto &shape_constraint = m_graph.m_input_shape_constraint;
+  for (uint32_t idx = 0; idx < shape_constraint.size(); ++idx) {
+    aipu_dynshape_item_t *shape_item = nullptr;
+    if (shape_param != nullptr) {
+      for (uint32_t item_idx = 0; item_idx < shape_param->input_shape_cnt;
+           ++item_idx) {
+        if (shape_param->shape_items[item_idx].ds_idx == idx) {
+          shape_item = &shape_param->shape_items[item_idx];
+          break;
+        }
+      }
+    }
+
+    if (shape_item == nullptr) {
+      for (uint32_t dim = 0; dim < shape_constraint.at(idx)[0].size(); ++dim)
+        m_config_in_tensor_shape[idx].push_back(
+            shape_constraint.at(idx)[0][dim]);
+
+      uint32_t size = std::accumulate(m_config_in_tensor_shape[idx].begin(),
+                                      m_config_in_tensor_shape[idx].end(), 1,
+                                      std::multiplies<uint32_t>{});
+      m_config_in_tensor_size[idx] = size;
+    } else {
+      if (shape_item->ds_data == nullptr) {
+        clear_dynamic_tensor_info();
+        LOG(LOG_ERR, "provided %uth shape is nullptr", idx);
+        return AIPU_STATUS_ERROR_NULL_PTR;
+      }
+
+      uint32_t size = 1;
+      uint32_t refer_rank = m_graph.m_input_shape_constraint[idx][0].size();
+      for (uint32_t dim = 0; dim < refer_rank; dim++) {
+        uint32_t min = m_graph.m_input_shape_constraint[idx][0][dim];
+        uint32_t max = m_graph.m_input_shape_constraint[idx][1][dim];
+        if (shape_item->ds_data[dim] < min || shape_item->ds_data[dim] > max) {
+          clear_dynamic_tensor_info();
+          LOG(LOG_ERR, "input%d, dim[%d]: %u beyond scope (%u, %u)", idx, dim,
+              shape_item->ds_data[dim], min, max);
+          return AIPU_STATUS_ERROR_INVALID_SIZE;
+        }
+
+        size *= shape_item->ds_data[dim];
+        m_config_in_tensor_shape[idx].push_back(shape_item->ds_data[dim]);
+      }
+
+      if (size < m_graph.m_input_shape_threshhold[idx][0] ||
+          size > m_graph.m_input_shape_threshhold[idx][1]) {
+        clear_dynamic_tensor_info();
+        LOG(LOG_ERR,
+            "input%d: shape size(e.g.N*H*W*C): %u invalid, valid scope (%lu, "
+            "%lu)",
+            idx, size, m_graph.m_input_shape_threshhold[idx][0],
+            m_graph.m_input_shape_threshhold[idx][1]);
+        return AIPU_STATUS_ERROR_INVALID_SIZE;
+      }
+      m_config_in_tensor_size[idx] = size;
+    }
+    if (m_graph.get_io_tensor_type(idx) == AIPU_DATA_TYPE_U16 ||
+        m_graph.get_io_tensor_type(idx) == AIPU_DATA_TYPE_S16 ||
+        m_graph.get_io_tensor_type(idx) == AIPU_DATA_TYPE_F16 ||
+        m_graph.get_io_tensor_type(idx) == AIPU_DATA_TYPE_BF16)
+      m_config_in_tensor_size[idx] <<= 1;
+    else if (m_graph.get_io_tensor_type(idx) == AIPU_DATA_TYPE_U32 ||
+             m_graph.get_io_tensor_type(idx) == AIPU_DATA_TYPE_S32 ||
+             m_graph.get_io_tensor_type(idx) == AIPU_DATA_TYPE_F32)
+      m_config_in_tensor_size[idx] <<= 2;
+  }
+
+  aipu_status_t ret = update_dynamic_io_tensor_size(AIPU_TENSOR_TYPE_INPUT);
+  if (ret != AIPU_STATUS_SUCCESS) {
+    clear_dynamic_tensor_info();
+    return ret;
+  }
+
+  m_dynamic_shape_set_done = true;
+  return AIPU_STATUS_SUCCESS;
+}
+} // namespace aipudrv

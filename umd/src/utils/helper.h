@@ -1,0 +1,234 @@
+// Copyright (C) 2023-2025 Arm Technology (China) Co. Ltd.
+//
+// SPDX-License-Identifier: Apache-2.0
+
+/**
+ * @file  helper.h
+ * @brief UMD helper function header
+ */
+
+#ifndef _HELPER_H_
+#define _HELPER_H_
+
+#include <fstream>
+#include <iostream>
+#include <sstream>
+#include <vector>
+
+#include "standard_api.h"
+
+/**
+ * @brief Align buffer bytes per page_size (4KB)
+ */
+#define ALIGN_PAGE(bytes) (((bytes) + (4096) - 1) & (~((4096) - 1)))
+#define ALIGN_ADDR(bytes) ((ALIGN_PAGE(bytes)) / (4096))
+
+/**
+ * @brief This function is used to dump memory data into file
+ *
+ * @param[in] fname File full name
+ * @param[in] src   Source location of data
+ * @param[in] size  Dumped size
+ *
+ * @retval AIPU_STATUS_SUCCESS
+ * @retval AIPU_STATUS_ERROR_NULL_PTR
+ * @retval AIPU_STATUS_ERROR_INVALID_SIZE
+ * @retval AIPU_STATUS_ERROR_OPEN_FILE_FAIL
+ * @retval AIPU_STATUS_ERROR_WRITE_FILE_FAIL
+ */
+aipu_status_t umd_dump_file_helper(const char *fname, const void *src,
+                                   unsigned int size);
+
+/**
+ * @brief This function is used to load file into memory
+ *
+ * @param[in]  fname File full name
+ * @param[out] dest  Destination of data
+ * @param[in]  size  Load size
+ *
+ * @retval AIPU_STATUS_SUCCESS
+ * @retval AIPU_STATUS_ERROR_NULL_PTR
+ * @retval AIPU_STATUS_ERROR_INVALID_SIZE
+ * @retval AIPU_STATUS_ERROR_OPEN_FILE_FAIL
+ * @retval AIPU_STATUS_ERROR_READ_FILE_FAIL
+ */
+aipu_status_t umd_load_file_helper(const char *fname, void *dest,
+                                   unsigned int size);
+
+/**
+ * @brief This function is used to open and mmap a file into memory
+ *
+ * @param[in]  fname File full name
+ * @param[out] data  Pointer to file mmap buffer
+ * @param[out] size  File size
+ *
+ * @retval AIPU_STATUS_SUCCESS
+ * @retval AIPU_STATUS_ERROR_NULL_PTR
+ * @retval AIPU_STATUS_ERROR_OPEN_FILE_FAIL
+ * @retval AIPU_STATUS_ERROR_MAP_FILE_FAIL
+ */
+aipu_status_t umd_mmap_file_helper(const char *fname, void **data,
+                                   uint64_t *size, bool readonly = false);
+
+/**
+ * @brief This function is used to open and mmap a file into memory
+ *
+ * @param[in]  fname File full name
+ * @param[out] data  Pointer to file mmap buffer
+ * @param[in] size  mmap file size
+ * @param[in] offset mmmap offset of file
+ *
+ * @retval AIPU_STATUS_SUCCESS
+ * @retval AIPU_STATUS_ERROR_NULL_PTR
+ * @retval AIPU_STATUS_ERROR_OPEN_FILE_FAIL
+ * @retval AIPU_STATUS_ERROR_MAP_FILE_FAIL
+ */
+aipu_status_t umd_mmap_file_helper(const char *fname, void **data,
+                                   uint64_t size, uint64_t offset = 0,
+                                   bool readonly = false);
+
+/**
+ * @brief This function is used to draw a line composed of a character into an
+ * opened file
+ *
+ * @param[in] file File stream
+ * @param[in] ch   Character of the line to be drawn
+ * @param[in] num  Character number, i.e. length of the line
+ *
+ */
+void umd_draw_line_helper(std::ofstream &file, char ch, uint32_t num);
+
+/**
+ * @brief This function is used to check if a given pointer is within a valid
+ * region; When size == 0, only check the ptr itself
+ *
+ * @param[in] lower_bound Lower bound of the region
+ * @param[in] upper_bound Upper bound of the region
+ * @param[in] ptr         A given pointer
+ * @param[in] size        Size to operate after pointer ptr
+ *
+ */
+bool umd_is_valid_ptr(const void *lower_bound, const void *upper_bound,
+                      const void *ptr, uint32_t size = 0);
+
+/**
+ * @brief This function is used to dump back trace of calling functions
+ *
+ * @note  it's just effective based on GNU g++ compiler, not for Android clang
+ */
+void dump_stack(void);
+
+/**
+ * @brief This function is used to get time stamp(ms,us,ns optionally)
+ */
+std::string umd_timestamp_helper(int time_stamp_type = 0);
+
+/**
+ * @brief This function is used to get strings split by @param delim
+ */
+std::vector<std::string> split_string(const std::string &s,
+                                      const std::string &splitter,
+                                      const int keep_spliter = 0);
+
+/**
+ * @brief This function is used to replace a old charactor in string with a new
+ * charactor
+ */
+std::string &replace(std::string &s, char old_c, char new_c);
+
+/**
+ * This function is used to replace a old sub-string in string with a new string
+ */
+std::string &replace(std::string &s, const std::string &old_s,
+                     const std::string &new_s);
+
+/**
+ * @brief This class is for generating runtime.cfg for simulation.
+ */
+class FileWrapper {
+public:
+  FileWrapper(std::string file, std::ios_base::openmode mode) {
+    m_fs.open(file, mode);
+    if (!m_fs.is_open())
+      std::cout << "FileWrapper open: " << file << " [fail]\n";
+  }
+
+  ~FileWrapper() {
+    if (m_fs.is_open())
+      m_fs.close();
+  }
+
+  bool is_open() { return m_fs.is_open(); }
+
+  template <typename T> FileWrapper &operator<<(const T &arg) {
+    m_fs << arg;
+    return *this;
+  }
+
+  void dump_to_string(std::string &str) {
+    std::ostringstream tmp;
+    m_fs.seekg(0, std::ios_base::beg);
+    tmp << m_fs.rdbuf();
+    str = tmp.str();
+  }
+
+  void close() {
+    if (m_fs.is_open())
+      m_fs.close();
+  }
+
+private:
+  std::fstream m_fs;
+};
+
+class CustomMemBuf : public std::basic_stringbuf<char> {
+public:
+  CustomMemBuf(char *data, size_t length) {
+    setg(const_cast<char *>(data), const_cast<char *>(data),
+         const_cast<char *>(data + length));
+  }
+
+protected:
+  int_type underflow() override {
+    if (gptr() < egptr())
+      return traits_type::to_int_type(*gptr());
+
+    return traits_type::eof();
+  }
+
+  virtual std::streampos
+  seekoff(std::streamoff off, std::ios_base::seekdir dir,
+          std::ios_base::openmode which = std::ios_base::in |
+                                          std::ios_base::out) override {
+    if (off == 0 && dir == std::ios_base::cur)
+      return std::streampos(static_cast<std::ptrdiff_t>(gptr() - eback()));
+
+    if (dir == std::ios_base::beg) {
+      if (off < 0 || off > egptr() - eback())
+        return std::streampos(-1);
+
+      setg(eback(), eback() + off, egptr());
+    } else if (dir == std::ios_base::cur) {
+      if (off < 0 || off > gptr() - eback())
+        return std::streampos(-1);
+
+      setg(eback(), gptr() + off, egptr());
+    } else if (dir == std::ios_base::end) {
+      if (off < 0 || off > egptr() - eback())
+        return std::streampos(-1);
+
+      setg(eback(), egptr() + off, egptr());
+    }
+
+    return std::streampos(static_cast<std::ptrdiff_t>(gptr() - eback()));
+  }
+
+  virtual std::streampos
+  seekpos(std::streampos sepos,
+          std::ios_base::openmode which = std::ios_base::in |
+                                          std::ios_base::out) override {
+    return seekoff(sepos, std::ios_base::beg);
+  }
+};
+
+#endif /* _HELPER_H_ */
