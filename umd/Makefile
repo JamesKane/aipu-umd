@@ -32,10 +32,11 @@ ANDROIDLDFLAGS := -Wl,-O3 -Wl,--gc-sections \
                   -Wl,--exclude-libs,$(BUILD_ANDROID_NDK)/toolchains/llvm/prebuilt/linux-x86_64/aarch64-linux-android/lib64/libatomic.a \
                   -static-libstdc++ -Wl,--build-id -Wl,--warn-shared-textrel -Wl,--fatal-warnings -Qunused-arguments -Wl,-z,noexecstack  -Wl,-z,defs
 
-# FreeBSD: clang, as for Android; the warnings ANDROIDCXXFLAGS turns off, and
-# newer clang's on variable-length arrays.  The kernel UAPI header's
-# linux/*.h from ../freebsd/include.
-ifeq ($(shell uname -s), FreeBSD)
+# For FreeBSD (its clang, as for Android): the warnings ANDROIDCXXFLAGS turns
+# off, and newer clang's on variable-length arrays and unused private fields;
+# the kernel UAPI header's linux/*.h from ../freebsd/include.  By the
+# compiler's target: a Linux build on FreeBSD (its Linux g++) is Linux's.
+ifneq ($(findstring freebsd,$(shell $(CXX) -dumpmachine)),)
     CXXFLAGS += -I../freebsd/include \
                 -Wno-missing-braces -Wno-inconsistent-missing-override \
                 -Wno-unused-variable -Wno-overloaded-virtual \
