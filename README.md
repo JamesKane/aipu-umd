@@ -16,7 +16,8 @@ for FreeBSD, for the CIX Sky1's NPU (Zhouyi X2, architecture v3; Orange Pi
 - `tools/npurun/`: runs a compiled graph on preprocessed images and ranks
   the output (BSD-2-Clause).
 - `tools/noerun/`: the same through CIX's binary-only `libnoe`, a Linux
-  program (BSD-2-Clause).
+  program, and `noerun.py` through its Python wheel, from JPEGs
+  (BSD-2-Clause).
 
 ## Why 4.1.0
 
@@ -70,3 +71,21 @@ programs reach `/dev/aipu` through `aipu_linux.ko` (in aipu-kmod), so
   although the header defaults it to `nullptr`.
 - The port's `libgcc_s.so` is a symlink, not Rocky's linker script (which
   adds `libgcc.a`), so `build-linux.sh` builds with `-mno-outline-atomics`.
+
+## CIX's Python wheel
+
+`libnoe`'s wheel (`libnoe-3.1.2-py3-none-manylinux2014_aarch64.whl`, in the
+same package) holds extension modules for CPython 3.10 to 3.13. Rocky 9's
+Linux Python is 3.9, so the interpreter is a Linux CPython 3.12 from
+[python-build-standalone](https://github.com/astral-sh/python-build-standalone)
+(`aarch64-unknown-linux-gnu`, unpacked in a directory of its own), with
+numpy and Pillow from pip:
+
+    python/bin/python3.12 -m pip install numpy pillow libnoe-3.1.2-*.whl
+    AIPU_LIB_PATH=$PWD/build-linux/bin/libaipudrv.so \
+        python/bin/python3.12 tools/noerun/noerun.py model.cix labels.txt *.JPEG
+
+- Not from a directory that holds `libnoe.so` (the C library): Python
+  imports it as the module.
+- `noe_load_tensor()` takes the input as `bytes`: given an ndarray, the
+  wheel returns outputs as ndarrays that repeat their first element.
